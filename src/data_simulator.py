@@ -23,6 +23,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Iterator
+from zoneinfo import ZoneInfo
 
 MERCHANT_CATEGORIES: dict[str, tuple[float, float]] = {
     # category: (median amount USD, spread) — amounts are log-normal around the median
@@ -40,6 +41,12 @@ MERCHANT_CATEGORIES: dict[str, tuple[float, float]] = {
 }
 HIGH_RISK_CATEGORIES = ["electronics", "gift_cards", "jewelry"]
 COUNTRIES = ["SG", "MY", "ID", "TH", "PH", "VN", "US", "GB", "AU", "JP"]
+# Shopping-hour patterns are in each country's LOCAL time; timestamps are stored in UTC
+COUNTRY_TZ = {
+    "SG": "Asia/Singapore", "MY": "Asia/Kuala_Lumpur", "ID": "Asia/Jakarta", "TH": "Asia/Bangkok",
+    "PH": "Asia/Manila", "VN": "Asia/Ho_Chi_Minh", "US": "America/New_York", "GB": "Europe/London",
+    "AU": "Australia/Sydney", "JP": "Asia/Tokyo",
+}
 PAYMENT_METHODS = ["credit_card", "debit_card", "e_wallet", "bnpl", "bank_transfer"]
 DEVICES = ["ios", "android", "web_desktop", "web_mobile"]
 FRAUD_TYPES = ["card_testing", "account_takeover", "high_risk_spend", "odd_hours"]
@@ -109,10 +116,10 @@ class TransactionSimulator:
         return self.rng.choices(range(24), weights=[2, 1, 1, 1, 1, 1, 2, 4, 6, 7, 7, 8,
                                                     9, 8, 7, 7, 8, 9, 10, 11, 11, 10, 7, 4])[0]
 
-    def _ts(self, base: datetime, hour: int | None) -> datetime:
-        if hour is None:
-            return base
-        return base.replace(hour=hour, minute=self.rng.randint(0, 59), second=self.rng.randint(0, 59))
+    def _ts(self, base: datetime, local_hour: int, country: str) -> datetime:
+        """`base`'s date at `local_hour` in `country`'s timezone (returned tz-aware)."""
+        local = base.astimezone(ZoneInfo(COUNTRY_TZ.get(country, "UTC")))
+        return local.replace(hour=local_hour, minute=self.rng.randint(0, 59), second=self.rng.randint(0, 59))
 
     def _txn(self, user: UserProfile, ts: datetime, **kw) -> Transaction:
         return Transaction(
@@ -179,19 +186,25 @@ class TransactionSimulator:
         # odd_hours
         category = r.choice(HIGH_RISK_CATEGORIES + ["travel", "fashion"])
         return [self._txn(
-            user, self._ts(ts, r.randint(1, 4)),
+            user, self._ts(ts, r.randint(1, 4), user.home_country),
             transaction_amount=self._amount(category, user.spend_multiplier * r.uniform(2, 6)),
             merchant_category=category, is_fraud=1,
             payment_method=r.choice(PAYMENT_METHODS),
             country=user.home_country, device_type=other_device, fraud_type=kind,
         )]
 
-    def next_transaction(self, now: datetime | None = None) -> Transaction:
-        """Return one transaction. `now` defaults to the current UTC time (real-time mode)."""
+    def next_transaction(self, now: datetime | None = None, local_hour: int | None = None) -> Transaction:
+        """Return one transaction.
+
+        `now` defaults to the current UTC time (real-time mode). For historical batches,
+        `local_hour` places the transaction at that hour in the user's home timezone.
+        """
         if self._pending:
             return self._pending.pop(0)
         now = now or datetime.now(timezone.utc)
         user = self.rng.choice(self.users)
+        if local_hour is not None:
+            now = self._ts(now, local_hour, user.home_country)
         if self.rng.random() < self._attack_prob:
             txns = self._fraud(user, now)
             self._pending.extend(txns[1:])
@@ -204,7 +217,7 @@ class TransactionSimulator:
         out: list[Transaction] = []
         while len(out) < n:
             day = start + timedelta(days=self.rng.randrange(days))
-            out.append(self.next_transaction(self._ts(day, self._normal_hour())))
+            out.append(self.next_transaction(day, local_hour=self._normal_hour()))
         out = out[:n]
         out.sort(key=lambda t: t.timestamp)
         return out

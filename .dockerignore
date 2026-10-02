@@ -1,0 +1,10 @@
+.git
+.venv
+venv
+data
+notebooks
+mlruns
+mlartifacts
+**/__pycache__
+.pytest_cache
+.env

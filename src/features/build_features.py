@@ -10,7 +10,8 @@ Feature groups
   * velocity   - # of the user's transactions in the past 10 min / 1 h / 24 h,
                  seconds since their previous transaction
   * behaviour  - first time seen with this country / device / payment method
-  * time       - hour of day, night flag, day of week
+  * time       - hour of day, night flag, day of week, in the LOCAL time of the
+                 transaction's country (timestamps are stored in UTC)
   * categorical one-hots for merchant_category, payment_method, device_type
 """
 
@@ -19,7 +20,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from src.data_simulator import DEVICES, MERCHANT_CATEGORIES, PAYMENT_METHODS
+from src.data_simulator import COUNTRY_TZ, DEVICES, MERCHANT_CATEGORIES, PAYMENT_METHODS
+
+# Bump whenever feature LOGIC changes. Training stamps it on each model version and
+# the API refuses to load a model built with a different version (training/serving skew).
+FEATURE_VERSION = "2"  # v2: hour / is_night / day_of_week in the country's local time
 
 # Fixed category lists keep the one-hot columns identical across training runs and serving
 CATEGORICALS = {
@@ -103,10 +108,18 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
     out["is_new_device"] = _first_time_seen(df, "device_type", has_history)
     out["is_new_payment_method"] = _first_time_seen(df, "payment_method", has_history)
 
-    # ---- time --------------------------------------------------------------
-    out["hour"] = df["timestamp"].dt.hour
-    out["is_night"] = out["hour"].between(1, 5).astype(int)
-    out["day_of_week"] = df["timestamp"].dt.dayofweek
+    # ---- time (local to the transaction's country) --------------------------
+    hour = pd.Series(df["timestamp"].dt.hour, index=df.index)
+    dow = pd.Series(df["timestamp"].dt.dayofweek, index=df.index)
+    for country, idx in df.groupby("country", sort=False).groups.items():
+        tz = COUNTRY_TZ.get(country)
+        if tz:
+            local = df.loc[idx, "timestamp"].dt.tz_convert(tz)
+            hour.loc[idx] = local.dt.hour
+            dow.loc[idx] = local.dt.dayofweek
+    out["hour"] = hour
+    out["is_night"] = hour.between(1, 5).astype(int)
+    out["day_of_week"] = dow
 
     # ---- categoricals (fixed vocab) -----------------------------------------
     for col, vocab in CATEGORICALS.items():
@@ -128,3 +141,28 @@ def build_features(raw: pd.DataFrame) -> pd.DataFrame:
 
 def feature_columns(features: pd.DataFrame) -> list[str]:
     return [c for c in features.columns if c not in NON_FEATURES]
+
+
+def build_online_features(history: pd.DataFrame, txn: dict,
+                          category_means: dict[str, float] | None = None) -> pd.DataFrame:
+    """Features for ONE incoming transaction, for real-time scoring.
+
+    Runs the exact same `build_features` used in training over the user's earlier
+    transactions plus the new one, and returns the new transaction's row. That
+    guarantees training/serving parity for every per-user feature.
+
+    The one cross-user feature, `amount_to_category_avg`, can't be derived from a
+    single user's history, so the caller supplies category averages (the API
+    caches them from Postgres). Without them it falls back to 1.0, the same value
+    training uses for a category's first-ever transaction.
+    """
+    cols = ["transaction_id", "user_id", "transaction_amount", "merchant_category",
+            "timestamp", "payment_method", "country", "device_type"]
+    hist = history[cols] if len(history) else pd.DataFrame(columns=cols)
+    frame = pd.concat([hist, pd.DataFrame([{c: txn[c] for c in cols}])], ignore_index=True)
+    feats = build_features(frame)
+    row = feats.loc[feats["transaction_id"] == txn["transaction_id"]].copy()
+
+    cat_avg = (category_means or {}).get(txn["merchant_category"])
+    row["amount_to_category_avg"] = float(txn["transaction_amount"]) / cat_avg if cat_avg else 1.0
+    return row.reset_index(drop=True)

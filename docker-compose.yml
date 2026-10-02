@@ -71,6 +71,29 @@ services:
       --port 5000
       --allowed-hosts "localhost:*,127.0.0.1:*,mlflow:*"
 
+  api:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    container_name: fraud-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_MODEL_NAME: fraud-detector
+      MODEL_REFRESH_SECONDS: "60"
+      REVIEW_THRESHOLD: "0.5"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: ${POSTGRES_USER:-mlops}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mlops}
+      POSTGRES_DB: ${POSTGRES_DB:-ecommerce}
+
 volumes:
   postgres_data:
   mlflow_artifacts:

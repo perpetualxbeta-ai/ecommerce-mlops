@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS predictions (
     model_name       VARCHAR(64) NOT NULL,
     model_version    VARCHAR(32),
     score            DOUBLE PRECISION NOT NULL,
-    label            SMALLINT,
+    label            SMALLINT,          -- ground truth, back-filled later for monitoring
+    decision         VARCHAR(16),       -- BLOCK / REVIEW / ALLOW
+    latency_ms       DOUBLE PRECISION,
     predicted_at     TIMESTAMPTZ DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_predictions_txn ON predictions (transaction_id);

@@ -47,7 +47,7 @@ from sklearn.metrics import (  # noqa: E402
 from xgboost import XGBClassifier  # noqa: E402
 
 from src import config  # noqa: E402
-from src.features.build_features import build_features, feature_columns  # noqa: E402
+from src.features.build_features import FEATURE_VERSION, build_features, feature_columns  # noqa: E402
 
 log = logging.getLogger("train")
 
@@ -168,6 +168,10 @@ def current_production(client: MlflowClient):
 
 def score_production_on(prod_version, X_test: pd.DataFrame, y_test) -> float | None:
     """F1 of the current Production model on this run's test set (None if it can't be scored)."""
+    if prod_version.tags.get("feature_version") != FEATURE_VERSION:
+        log.warning("Production v%s was built with feature_version=%s (current %s); treating as no champion",
+                    prod_version.version, prod_version.tags.get("feature_version"), FEATURE_VERSION)
+        return None
     try:
         model = mlflow.xgboost.load_model(f"models:/{MODEL_NAME}@{PROD_ALIAS}")
         threshold = float(prod_version.tags.get("threshold", 0.5))
@@ -222,6 +226,7 @@ def main() -> None:
             "train_rows": len(train), "val_rows": len(val), "test_rows": len(test),
             "train_start": str(train.timestamp.min()), "test_end": str(test.timestamp.max()),
             "train_fraud_rate": round(float(y_train.mean()), 4),
+            "feature_version": FEATURE_VERSION,
         })
 
         # ---- hyper-parameter search (nested runs) -------------------------------
@@ -263,6 +268,7 @@ def main() -> None:
         client.set_model_version_tag(MODEL_NAME, version, "threshold", f"{threshold:.6f}")
         client.set_model_version_tag(MODEL_NAME, version, "feature_columns", json.dumps(cols))
         client.set_model_version_tag(MODEL_NAME, version, "test_f1", f"{test_metrics['test_f1']:.4f}")
+        client.set_model_version_tag(MODEL_NAME, version, "feature_version", FEATURE_VERSION)
 
         # ---- champion vs challenger ---------------------------------------------
         new_f1 = test_metrics["test_f1"]
