@@ -4,5 +4,5 @@ xgboost
 fastapi
 uvicorn
 mlflow
-kafka-python
+kafka-python>=3.0
 psycopg2-binary
