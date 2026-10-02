@@ -18,8 +18,8 @@ data/               raw and processed datasets (git-ignored)
 notebooks/          exploration and prototyping
 src/data_simulator.py   synthetic transaction generator
 src/streaming/      Kafka producer + Kafka -> Postgres consumer
-src/features/       feature engineering
-src/models/         training, evaluation, registry
+src/features/       point-in-time feature engineering
+src/models/train.py XGBoost training, MLflow logging, registry promotion
 src/api/            FastAPI scoring service
 tests/              pytest suite
 docker/             service build files (MLflow image, Postgres init)
@@ -85,5 +85,31 @@ python -m src.data_simulator --n 50000 --days 60 --out data/raw/transactions.csv
 ### Delivery guarantees
 
 The consumer commits Kafka offsets only after the Postgres transaction commits (at-least-once), and inserts with `ON CONFLICT (transaction_id) DO NOTHING`, so replays after a crash don't create duplicates. Malformed messages are logged and skipped.
+
+## Training the fraud model
+
+```bash
+# Need history first: either let the producer/consumer run for a while, or backfill
+python -m src.data_simulator --n 60000 --days 60 --to-postgres
+
+python -m src.models.train                    # loads latest 200k rows, 6 hyper-param trials
+python -m src.models.train --n-trials 12 --limit 100000
+```
+
+What it does:
+
+1. **Features** (`src/features/build_features.py`): each transaction only sees the user's *earlier* transactions:
+   - velocity: count in the past 10 min / 1 h / 24 h, seconds since the last transaction
+   - amount vs. the user's running mean, max and z-score, and vs. the category's running mean
+   - first-time country, device or payment method; hour of day / night flag; one-hot categories
+2. **Time-based split**: oldest 70% train, next 15% validation, newest 15% test (no shuffling, so no peeking at the future).
+3. **Search**: each hyper-parameter candidate is a nested MLflow run. The best candidate is chosen on validation PR-AUC, and its decision threshold is tuned on validation for max F1.
+4. **Logging**: params, `precision` / `recall` / `f1` (test), PR-AUC, ROC-AUC, confusion counts, PR-curve and feature-importance plots, and the model with its input signature.
+5. **Registry**: every run registers a new version of `fraud-detector`. The current Production model is re-scored on the *same* test set, and the new version is promoted only if its F1 is at least as good (`--force-promote` overrides).
+   - Promotion sets the **`production` alias**, which is MLflow's current mechanism; load the model with `models:/fraud-detector@production`.
+   - It also moves the version to the legacy **"Production" stage**, which still shows in the UI.
+   - The decision threshold and feature list are stored as tags on each model version.
+
+Results on 60k simulated transactions: test precision ≈ 0.89, recall ≈ 0.86, F1 ≈ 0.87.
 
 > If you started the stack before the `transactions` schema changed, reset the database volume once: `docker compose down -v && docker compose up -d --build`.

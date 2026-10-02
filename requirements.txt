@@ -3,6 +3,7 @@ scikit-learn
 xgboost
 fastapi
 uvicorn
-mlflow
+mlflow>=3.0,<4
 kafka-python>=3.0
 psycopg2-binary
+matplotlib

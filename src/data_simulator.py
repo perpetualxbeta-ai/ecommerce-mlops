@@ -12,6 +12,7 @@ Fraud patterns injected (~2% of transactions by default, set with --fraud-rate):
 
 Usage:
     python -m src.data_simulator --n 10000 --out data/raw/transactions.csv
+    python -m src.data_simulator --n 50000 --days 60 --to-postgres   # backfill training history
 """
 
 from __future__ import annotations
@@ -221,15 +222,31 @@ def main() -> None:
     p.add_argument("--days", type=int, default=30, help="history window to spread transactions over")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--out", default="data/raw/transactions.csv")
+    p.add_argument("--to-postgres", action="store_true",
+                   help="insert directly into the Postgres transactions table instead of writing a CSV")
     args = p.parse_args()
+
+    sim = TransactionSimulator(n_users=args.users, fraud_rate=args.fraud_rate, seed=args.seed)
+    txns = sim.generate_batch(args.n, days=args.days)
+    fraud_rate = sum(t.is_fraud for t in txns) / len(txns)
+
+    if args.to_postgres:
+        from src import config
+        from src.streaming.consumer import connect_postgres, ensure_schema, to_row, write_batch
+
+        conn = connect_postgres(config.postgres_dsn())
+        ensure_schema(conn)
+        inserted = 0
+        for i in range(0, len(txns), 5000):
+            inserted += write_batch(conn, [to_row(t.to_dict()) for t in txns[i:i + 5000]])
+        conn.close()
+        print(f"Inserted {inserted:,} transactions into Postgres (fraud rate {fraud_rate:.2%})")
+        return
 
     import pandas as pd
 
-    sim = TransactionSimulator(n_users=args.users, fraud_rate=args.fraud_rate, seed=args.seed)
-    df = pd.DataFrame([t.to_dict() for t in sim.generate_batch(args.n, days=args.days)])
-    df.to_csv(args.out, index=False)
-    print(f"Wrote {len(df):,} transactions to {args.out} "
-          f"(fraud rate {df.is_fraud.mean():.2%})")
+    pd.DataFrame([t.to_dict() for t in txns]).to_csv(args.out, index=False)
+    print(f"Wrote {len(txns):,} transactions to {args.out} (fraud rate {fraud_rate:.2%})")
 
 
 if __name__ == "__main__":
