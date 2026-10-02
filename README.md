@@ -70,6 +70,75 @@ flowchart LR
     MLF -->|poll every 60s,<br/>hot-swap on promotion| MODEL
 ```
 
+### Sequence diagram
+
+The same system over time: a transaction is ingested, a model is trained and promoted, the API picks it up, and a checkout request is scored.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SIM as Simulator /<br/>Producer
+    participant K as Kafka
+    participant C as Consumer
+    participant PG as PostgreSQL
+    participant T as train.py
+    participant ML as MLflow
+    participant API as FastAPI
+    participant CL as Client
+
+    rect rgba(100, 149, 237, 0.12)
+    Note over SIM,PG: Ingestion (continuous)
+    SIM->>K: send(topic="transactions", key=user_id, JSON)
+    K->>C: poll() batch
+    C->>PG: INSERT … ON CONFLICT DO NOTHING
+    PG-->>C: COMMIT
+    C->>K: commit offsets (only after DB commit)
+    end
+
+    rect rgba(60, 179, 113, 0.12)
+    Note over PG,ML: Training & promotion (on demand)
+    T->>PG: SELECT latest N transactions
+    PG-->>T: rows
+    T->>T: build_features → time split → hyper-param search → tune threshold
+    T->>ML: log params, metrics, plots, model
+    T->>ML: register fraud-detector vN (tags: threshold, feature_version)
+    T->>ML: load current @production
+    ML-->>T: champion vM
+    T->>T: score champion & challenger on the same test set
+    alt challenger F1 ≥ champion F1
+        T->>ML: set alias production → vN, stage Production (archive vM)
+    else challenger is worse
+        Note over T,ML: vN stays registered as a challenger
+    end
+    end
+
+    rect rgba(255, 165, 0, 0.12)
+    Note over ML,API: Model refresh (API background loop, every 60s)
+    API->>ML: which version has @production?
+    ML-->>API: vN
+    alt vN differs from serving version
+        alt feature_version matches API code
+            API->>ML: download vN
+            ML-->>API: model artifacts
+            API->>API: atomic swap vM → vN
+        else feature_version mismatch
+            API->>API: keep vM, report error on /model
+        end
+    end
+    end
+
+    rect rgba(186, 85, 211, 0.12)
+    Note over CL,API: Real-time scoring (~70 ms)
+    CL->>API: POST /predict {user_id, amount, category, …}
+    API->>API: validate payload (422 if invalid)
+    API->>PG: SELECT user's earlier transactions
+    PG-->>API: history
+    API->>API: build_online_features → predict_proba → SHAP top factors
+    API-->>CL: {fraud_probability, decision: BLOCK/REVIEW/ALLOW, top_factors}
+    API--)PG: INSERT INTO predictions (after response)
+    end
+```
+
 **Three paths through the system**
 
 | Path | Flow | Latency |
