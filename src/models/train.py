@@ -41,8 +41,13 @@ import psycopg2  # noqa: E402
 from mlflow import MlflowClient  # noqa: E402
 from mlflow.models import infer_signature  # noqa: E402
 from sklearn.metrics import (  # noqa: E402
-    average_precision_score, confusion_matrix, f1_score, precision_recall_curve,
-    precision_score, recall_score, roc_auc_score,
+    average_precision_score,
+    confusion_matrix,
+    f1_score,
+    precision_recall_curve,
+    precision_score,
+    recall_score,
+    roc_auc_score,
 )
 from xgboost import XGBClassifier  # noqa: E402
 
@@ -138,7 +143,7 @@ def plot_importance(model: XGBClassifier, cols: list[str], path: str, top: int =
 
 # --------------------------------------------------------------------------- training
 def sample_params(n_trials: int, seed: int) -> list[dict]:
-    grid = [dict(zip(SEARCH_SPACE, combo)) for combo in itertools.product(*SEARCH_SPACE.values())]
+    grid = [dict(zip(SEARCH_SPACE, combo, strict=True)) for combo in itertools.product(*SEARCH_SPACE.values())]
     return random.Random(seed).sample(grid, k=min(n_trials, len(grid)))
 
 

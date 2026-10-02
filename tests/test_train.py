@@ -11,11 +11,12 @@ from mlflow import MlflowClient
 from src.data_simulator import TransactionSimulator
 from src.features.build_features import build_features
 from src.models import train
+from tests.conftest import DATA_START
 
 
 def _raw(n=20000, seed=1):
     sim = TransactionSimulator(n_users=300, seed=seed)
-    return pd.DataFrame([t.to_dict() for t in sim.generate_batch(n, days=30)])
+    return pd.DataFrame([t.to_dict() for t in sim.generate_batch(n, start=DATA_START, days=30)])
 
 
 def test_time_split_has_no_overlap():

@@ -16,12 +16,12 @@ import json
 import logging
 import signal
 import time
-from typing import Iterable
+from collections.abc import Iterable
 
 import psycopg2
-from psycopg2.extras import execute_values
 from kafka import KafkaConsumer
 from kafka.errors import KafkaError  # base class; NoBrokersAvailable was removed in kafka-python 3.x
+from psycopg2.extras import execute_values
 
 from src import config
 

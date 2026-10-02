@@ -20,9 +20,9 @@ from __future__ import annotations
 import argparse
 import random
 import uuid
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Iterator
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 MERCHANT_CATEGORIES: dict[str, tuple[float, float]] = {
@@ -125,7 +125,7 @@ class TransactionSimulator:
         return Transaction(
             transaction_id=str(uuid.UUID(int=self.rng.getrandbits(128))),
             user_id=user.user_id,
-            timestamp=ts.astimezone(timezone.utc).isoformat(),
+            timestamp=ts.astimezone(UTC).isoformat(),
             **kw,
         )
 
@@ -201,7 +201,7 @@ class TransactionSimulator:
         """
         if self._pending:
             return self._pending.pop(0)
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         user = self.rng.choice(self.users)
         if local_hour is not None:
             now = self._ts(now, local_hour, user.home_country)
@@ -213,7 +213,7 @@ class TransactionSimulator:
 
     def generate_batch(self, n: int, start: datetime | None = None, days: int = 30) -> list[Transaction]:
         """Generate `n` historical transactions spread across `days`, sorted by time (for training data)."""
-        start = start or (datetime.now(timezone.utc) - timedelta(days=days))
+        start = start or (datetime.now(UTC) - timedelta(days=days))
         out: list[Transaction] = []
         while len(out) < n:
             day = start + timedelta(days=self.rng.randrange(days))

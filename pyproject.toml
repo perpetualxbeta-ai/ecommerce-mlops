@@ -1,0 +1,22 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = [
+    "B008",  # FastAPI-style defaults
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::FutureWarning",
+    "ignore:.*Inferred schema contains integer.*:UserWarning",
+    "ignore:.*Union type hint.*:UserWarning",
+]

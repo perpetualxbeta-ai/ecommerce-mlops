@@ -99,6 +99,7 @@ async def lifespan(app: FastAPI):
     task.cancel()
     if state.store:
         state.store.close()
+        state.store = None  # a later startup in the same process (e.g. --reload) must reconnect
 
 
 app = FastAPI(

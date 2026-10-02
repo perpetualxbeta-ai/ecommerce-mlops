@@ -11,11 +11,13 @@ from fastapi.testclient import TestClient
 from mlflow import MlflowClient
 
 from src import config
-from src.api import main, model_manager
+from src.api import main
 from src.api.schemas import Decision
 from src.data_simulator import TransactionSimulator
 from src.models import train
 from src.streaming.consumer import ensure_schema, to_row, write_batch
+from tests.conftest import DATA_START
+
 
 def _pg():
     try:
@@ -41,7 +43,7 @@ def env(tmp_path_factory):
     conn.commit()
 
     sim = TransactionSimulator(n_users=150, seed=21)
-    txns = sim.generate_batch(15000, days=30)
+    txns = sim.generate_batch(15000, start=DATA_START, days=30)
     write_batch(conn, [to_row(t.to_dict()) for t in txns])
     raw = pd.DataFrame([t.to_dict() for t in txns])
 

@@ -4,12 +4,13 @@ import pytest
 
 from src.data_simulator import TransactionSimulator
 from src.features.build_features import NON_FEATURES, build_features, feature_columns
+from tests.conftest import DATA_START
 
 
 @pytest.fixture(scope="module")
 def raw():
     sim = TransactionSimulator(n_users=100, seed=11)
-    return pd.DataFrame([t.to_dict() for t in sim.generate_batch(6000, days=20)])
+    return pd.DataFrame([t.to_dict() for t in sim.generate_batch(6000, start=DATA_START, days=20)])
 
 
 @pytest.fixture(scope="module")

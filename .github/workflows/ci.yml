@@ -4,9 +4,32 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch / PR
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  MLFLOW_DISABLE_TELEMETRY: "true"
+  MLFLOW_DISABLE_AGENT_HINT: "1"
 
 jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install ruff
+      - run: ruff check src tests --output-format=github
+
   test:
+    name: Tests (pytest + Postgres)
     runs-on: ubuntu-latest
 
     services:
@@ -29,17 +52,63 @@ jobs:
       POSTGRES_PORT: 5432
       POSTGRES_USER: mlops
       POSTGRES_PASSWORD: mlops
-      POSTGRES_DB: ecommerce
+      POSTGRES_DB: ecommerce   # tests run against ecommerce_test (see tests/conftest.py)
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
+
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest httpx
-      - name: Run tests
-        run: pytest -q
+
+      - name: API smoke test (app imports and boots without a model)
+        run: pytest tests/test_api_smoke.py tests/test_smoke.py
+
+      - name: Full test suite
+        run: pytest -rs --durations=10 --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: test-results.xml
+
+  docker:
+    name: Docker images build & boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate docker-compose.yml
+        run: docker compose config -q
+
+      - name: Build MLflow server image
+        run: docker build -t ecommerce-mlops/mlflow:ci docker/mlflow
+
+      - name: MLflow image can reach Postgres driver
+        run: docker run --rm ecommerce-mlops/mlflow:ci python -c "import mlflow, psycopg2; print('mlflow', mlflow.__version__)"
+
+      - name: Build API image
+        run: docker build -f docker/api/Dockerfile -t ecommerce-mlops/api:ci .
+
+      - name: API container boots and answers /health
+        run: |
+          docker run -d --name api -p 8000:8000 \
+            -e MLFLOW_TRACKING_URI=http://127.0.0.1:1 -e POSTGRES_HOST=127.0.0.1 \
+            ecommerce-mlops/api:ci
+          for i in $(seq 1 30); do
+            if curl -sf localhost:8000/health; then echo; break; fi
+            sleep 2
+          done
+          curl -sf localhost:8000/health
+          # No MLflow/Postgres here, so readiness must report 503 rather than crash
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/ready)" = "503"
+          docker logs api | tail -20

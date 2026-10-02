@@ -5,10 +5,16 @@ working database. Every test session is redirected to `<POSTGRES_DB>_test`,
 which is created on the fly if Postgres is reachable.
 """
 
+from datetime import UTC, datetime
+
 import psycopg2
 from psycopg2 import sql
 
 from src import config
+
+# Simulated test data is anchored to a fixed date (not "now"), so every run trains on
+# identical data and model-dependent assertions are deterministic.
+DATA_START = datetime(2026, 9, 1, tzinfo=UTC)
 
 _REAL_DB = config.POSTGRES_DB
 TEST_DB = _REAL_DB if _REAL_DB.endswith("_test") else f"{_REAL_DB}_test"

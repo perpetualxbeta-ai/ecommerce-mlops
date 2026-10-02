@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -14,7 +14,7 @@ PaymentMethod = Literal[tuple(PAYMENT_METHODS)]  # type: ignore[valid-type]
 DeviceType = Literal[tuple(DEVICES)]  # type: ignore[valid-type]
 
 
-class Decision(str, Enum):
+class Decision(StrEnum):
     BLOCK = "BLOCK"
     REVIEW = "REVIEW"
     ALLOW = "ALLOW"
@@ -25,7 +25,7 @@ class TransactionIn(BaseModel):
     user_id: str = Field(..., min_length=1, max_length=64, examples=["user_00042"])
     transaction_amount: float = Field(..., gt=0, lt=1_000_000, examples=[1899.0])
     merchant_category: MerchantCategory = Field(..., examples=["electronics"])
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc),
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC),
                                 description="Defaults to now (UTC). Naive datetimes are treated as UTC.")
     payment_method: PaymentMethod = Field(..., examples=["credit_card"])
     country: str = Field(..., min_length=2, max_length=8, examples=["SG"],
@@ -35,7 +35,7 @@ class TransactionIn(BaseModel):
     @field_validator("timestamp")
     @classmethod
     def _utc(cls, v: datetime) -> datetime:
-        return v.replace(tzinfo=timezone.utc) if v.tzinfo is None else v.astimezone(timezone.utc)
+        return v.replace(tzinfo=UTC) if v.tzinfo is None else v.astimezone(UTC)
 
     @field_validator("country")
     @classmethod

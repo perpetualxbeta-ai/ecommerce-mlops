@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import mlflow
 from mlflow import MlflowClient
@@ -67,12 +67,12 @@ class ModelManager:
             staged = [v for v in versions if v.current_stage == self.fallback_stage]
             if not staged:
                 raise LookupError(f"No '{self.alias}' alias or '{self.fallback_stage}' stage "
-                                  f"for model '{self.model_name}'. Train one: python -m src.models.train")
+                                  f"for model '{self.model_name}'. Train one: python -m src.models.train") from None
             return max(staged, key=lambda v: int(v.version))
 
     def refresh(self, force: bool = False) -> bool:
         """Load the Production model if it changed. Returns True if a new model was swapped in."""
-        self.last_checked = datetime.now(timezone.utc).isoformat()
+        self.last_checked = datetime.now(UTC).isoformat()
         try:
             mv = self._resolve_production_version()
             version = str(mv.version)
@@ -91,7 +91,7 @@ class ModelManager:
                 model=model, name=self.model_name, version=version, run_id=mv.run_id,
                 threshold=float(mv.tags.get("threshold", 0.5)),
                 feature_columns=json.loads(mv.tags["feature_columns"]),
-                loaded_at=datetime.now(timezone.utc).isoformat(),
+                loaded_at=datetime.now(UTC).isoformat(),
             )
             with self._lock:
                 previous = self._current
